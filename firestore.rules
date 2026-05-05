@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && 
+             isEmailVerified() && 
+             request.auth.token.email == 'bramvanherreweghe117@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Reservation validation
+    function isValidReservation(data) {
+      return data.keys().hasAll(['name', 'email', 'peopleCount', 'date', 'time', 'tableId', 'createdAt']) &&
+             data.keys().size() <= 8 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() > 0 && data.email.size() <= 100 &&
+             data.email.matches('^[^@]+@[^@]+\\.[^@]+$') &&
+             data.peopleCount is number && data.peopleCount >= 1 && data.peopleCount <= 10 &&
+             data.date is string && data.date.size() == 10 &&
+             data.time is string && data.time.size() == 5 &&
+             data.tableId is string && data.tableId.size() <= 10 &&
+             data.createdAt == request.time &&
+             (!data.keys().hasAny(['message']) || (data.message is string && data.message.size() <= 500));
+    }
+
+    match /reservations/{reservationId} {
+      // 1. Master Gate: Only admins can view/list/delete all reservations
+      // 8. Secure List Queries: The list rule here forces the admin check
+      allow list: if isAdmin();
+      allow get, delete: if isAdmin() && isValidId(reservationId);
+      
+      // 2. Validation Blueprint: Guests can ONLY create, not update or delete
+      // 10. Temporal Integrity: createdAt MUST be server timestamp
+      allow create: if isValidId(reservationId) && isValidReservation(request.resource.data);
+      
+      // 4. Tiered Identity: Normal users cannot update reservations at all
+      allow update: if false; 
+    }
+  }
+}
